@@ -25,8 +25,12 @@ double influence = 0.05;
 unsigned long debounce_ms = 200;
 
 unsigned long max_delay_between_knock_ms = 3000; // 3 seconds
+unsigned long max_delay_between_knock_same_bin_ms = 750; // .75 second
 unsigned long previous_knock_timestamp = 0;
-int current_knock = 0;
+
+String pattern = "";
+int current_bin = 0;
+bool knocking = false;
 
 void setup() {
   Serial.begin(9600); // set the data rate for the Serial communication
@@ -50,51 +54,53 @@ void setup() {
 }
 
 void loop() {
-  double data = (double)analogRead(A0) / 512 - 1; // reads the value of the sensor and converts to a range between -1 and 1
+  double data = (double) analogRead(A0) / 512 - 1; // reads the value of the sensor and converts to a range between -1 and 1
   peakDetection.add(data); // adds a new data point
   int peak = peakDetection.getPeak(); // returns 0, 1 or -1
   double filtered = peakDetection.getFilt(); // moving average
 
   unsigned long current_time = millis();
-
-  bool debounce = (current_time - previous_knock_timestamp) < debounce_ms;
+  unsigned long elapsed = current_time - previous_knock_timestamp;
+  if (elapsed > max_delay_between_knock_ms && knocking)
+  {
+    Serial.println("Resetting pattern.");
+    pattern = "";
+    current_bin = 0;
+    knocking = false;
+  }
+  else if (elapsed > max_delay_between_knock_same_bin_ms && current_bin != 0)
+  {
+    pattern.concat(current_bin);
+    current_bin = 0;
+  }
 
   if (peak == 1)
   {
-    if (debounce)
-    {
+    if (elapsed < debounce_ms) {
       Serial.print("o");
+      return;
     }
-    else
-    {
-      Serial.print("*");
 
-      bool elapsed = (current_time - previous_knock_timestamp) > max_delay_between_knock_ms;
-      // Reset knock detection if max delay has elapsed since a knock
-      if (elapsed && current_knock != 0)
-      {
-        Serial.println("Resetting pattern. current knock at 1");
-        current_knock = 1;
-      }
-      else
-      {
-        Serial.print("\nDetected: ");
-        Serial.println(++current_knock);
-        if (current_knock == 3) {
-          tellWillowbot();
-          current_knock = 0;
-        }
-      }
-      
-      // Store this current peak as the previous knock
-      previous_knock_timestamp = current_time;
-    }
+    Serial.print("\nDetected: ");
+    ++current_bin;
+    Serial.println(pattern + "" + current_bin);
+    // Store this current peak as the previous knock
+    previous_knock_timestamp = current_time;
+    knocking = true;
+  }
+
+  if (pattern.length() == 3)
+  {
+    tellWillowbot(pattern);
+    pattern = "";
+    current_bin = 0;
+    knocking = false;
   }
 }
 
-void tellWillowbot()
+void tellWillowbot(String knockPattern)
 {
-  client.get("/");
+  client.get("/secretknock/" + knockPattern);
 
   int statusCode = client.responseStatusCode();
   String response = client.responseBody();
